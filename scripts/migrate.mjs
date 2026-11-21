@@ -6,13 +6,20 @@ import path from "node:path";
 import pg from "pg";
 
 const dir = path.resolve(process.argv[2] ?? "prisma/migrations");
-const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+if (!process.env.DATABASE_URL) {
+  console.error("DATABASE_URL is not set.");
+  process.exit(1);
+}
 
+// A pg.Client can't be reused after a failed connect(), so make a fresh one per attempt.
+let client;
 for (let i = 0; ; i++) {
+  client = new pg.Client({ connectionString: process.env.DATABASE_URL });
   try { await client.connect(); break; }
   catch (e) {
+    await client.end().catch(() => {});
     if (i >= 30) throw e;
-    console.log("Waiting for database…");
+    console.log(`Waiting for database… (${e.code ?? e.message})`);
     await new Promise((r) => setTimeout(r, 2000));
   }
 }
