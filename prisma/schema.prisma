@@ -1,0 +1,172 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["queryCompiler", "driverAdapters"]
+  engineType      = "client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  MANAGER
+  EMPLOYEE
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum HalfDay {
+  NONE
+  AM
+  PM
+}
+
+model User {
+  id           String      @id @default(cuid())
+  email        String      @unique
+  name         String
+  image        String?
+  role         Role        @default(EMPLOYEE)
+  status       UserStatus  @default(ACTIVE)
+  jobTitle     String?
+  phone        String?
+  employeeNo   String?     @unique
+  joinDate     DateTime?   @db.Date
+  departmentId String?
+  department   Department? @relation(fields: [departmentId], references: [id])
+  managerId    String?
+  manager      User?       @relation("Reports", fields: [managerId], references: [id])
+  reports      User[]      @relation("Reports")
+  lastLoginAt  DateTime?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  leaveRequests  LeaveRequest[] @relation("LeaveOwner")
+  leaveDecisions LeaveRequest[] @relation("LeaveApprover")
+  leaveBalances  LeaveBalance[]
+  claims         Claim[]        @relation("ClaimOwner")
+  claimDecisions Claim[]        @relation("ClaimApprover")
+  auditLogs      AuditLog[]
+}
+
+model Department {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  users     User[]
+  createdAt DateTime @default(now())
+}
+
+model LeaveType {
+  id                String         @id @default(cuid())
+  name              String         @unique
+  code              String         @unique
+  defaultDays       Decimal        @default(0) @db.Decimal(5, 1)
+  carryForwardMax   Decimal        @default(0) @db.Decimal(5, 1)
+  paid              Boolean        @default(true)
+  requiresReason    Boolean        @default(false)
+  color             String         @default("#6366f1")
+  active            Boolean        @default(true)
+  sortOrder         Int            @default(0)
+  requests          LeaveRequest[]
+  balances          LeaveBalance[]
+}
+
+/// Per-user, per-type, per-year entitlement. "used" is computed from approved requests.
+model LeaveBalance {
+  id             String    @id @default(cuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  leaveTypeId    String
+  leaveType      LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+  year           Int
+  entitled       Decimal   @db.Decimal(5, 1)
+  carriedForward Decimal   @default(0) @db.Decimal(5, 1)
+  adjustment     Decimal   @default(0) @db.Decimal(5, 1)
+  note           String?
+
+  @@unique([userId, leaveTypeId, year])
+}
+
+model LeaveRequest {
+  id           String        @id @default(cuid())
+  userId       String
+  user         User          @relation("LeaveOwner", fields: [userId], references: [id], onDelete: Cascade)
+  leaveTypeId  String
+  leaveType    LeaveType     @relation(fields: [leaveTypeId], references: [id])
+  startDate    DateTime      @db.Date
+  endDate      DateTime      @db.Date
+  halfDay      HalfDay       @default(NONE)
+  days         Decimal       @db.Decimal(5, 1)
+  reason       String?
+  status       RequestStatus @default(PENDING)
+  approverId   String?
+  approver     User?         @relation("LeaveApprover", fields: [approverId], references: [id])
+  decisionNote String?
+  decidedAt    DateTime?
+  createdAt    DateTime      @default(now())
+
+  @@index([userId, status])
+  @@index([startDate, endDate])
+}
+
+model Holiday {
+  id   String   @id @default(cuid())
+  date DateTime @unique @db.Date
+  name String
+}
+
+model ClaimCategory {
+  id            String   @id @default(cuid())
+  name          String   @unique
+  limitPerClaim Decimal? @db.Decimal(10, 2)
+  active        Boolean  @default(true)
+  claims        Claim[]
+}
+
+model Claim {
+  id           String        @id @default(cuid())
+  userId       String
+  user         User          @relation("ClaimOwner", fields: [userId], references: [id], onDelete: Cascade)
+  categoryId   String
+  category     ClaimCategory @relation(fields: [categoryId], references: [id])
+  amount       Decimal       @db.Decimal(10, 2)
+  currency     String        @default("MYR")
+  expenseDate  DateTime      @db.Date
+  description  String
+  receiptPath  String?
+  receiptName  String?
+  receiptMime  String?
+  status       RequestStatus @default(PENDING)
+  approverId   String?
+  approver     User?         @relation("ClaimApprover", fields: [approverId], references: [id])
+  decisionNote String?
+  decidedAt    DateTime?
+  createdAt    DateTime      @default(now())
+
+  @@index([userId, status])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  actor     User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action    String
+  entity    String
+  entityId  String?
+  meta      Json?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
