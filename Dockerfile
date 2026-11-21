@@ -1,11 +1,14 @@
 # ---------- build ----------
 FROM node:22-alpine AS build
 WORKDIR /app
+# Copy only what `npm ci` (and its postinstall `prisma generate`) needs, so this layer stays
+# cached until dependencies or the schema change — not on every code, seed or migration edit.
 COPY package.json package-lock.json prisma.config.ts ./
-COPY prisma ./prisma
-RUN npm ci
+COPY prisma/schema.prisma ./prisma/schema.prisma
+RUN npm ci --no-audit --no-fund
 COPY . .
-RUN npx prisma generate && npx next build
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN npx next build
 
 # ---------- run ----------
 FROM node:22-alpine AS run
@@ -26,4 +29,4 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s CMD wget -qO- http://127.0.0.1:3000/login >/dev/null || exit 1
 # Mounted storage (e.g. on Railway) arrives root-owned: fix ownership, then drop to the app user.
 # Apply migrations, insert reference data on first boot, then serve.
-CMD ["sh", "-c", "mkdir -p \"$UPLOAD_DIR\" && chown -R app:app \"$UPLOAD_DIR\" && exec su-exec app sh -c 'node scripts/migrate.mjs && node prisma/seed.mjs && exec node server.js'"]
+CMD ["sh", "-c", "mkdir -p \"$UPLOAD_DIR\" && chown app:app \"$UPLOAD_DIR\" && exec su-exec app sh -c 'node scripts/migrate.mjs && node prisma/seed.mjs && exec node server.js'"]
