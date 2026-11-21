@@ -7,6 +7,11 @@ const transport = process.env.SMTP_HOST
       port: Number(process.env.SMTP_PORT || 587),
       secure: process.env.SMTP_SECURE === "true",
       auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined,
+      // Fail fast: hosts that block outbound SMTP (e.g. Railway Hobby) would otherwise hang the
+      // request for minutes, making forms like "Add employee" appear broken.
+      connectionTimeout: 8000,
+      greetingTimeout: 8000,
+      socketTimeout: 15000,
     })
   : null;
 
