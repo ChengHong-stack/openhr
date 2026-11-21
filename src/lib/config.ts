@@ -3,7 +3,8 @@ const list = (v?: string) =>
 
 export const config = {
   appName: process.env.APP_NAME || "OpenHR",
-  appUrl: (process.env.APP_URL || process.env.AUTH_URL || process.env.RENDER_EXTERNAL_URL || "http://localhost:3000").replace(/\/$/, ""),
+  appUrl: (process.env.APP_URL || process.env.AUTH_URL ||
+    (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : "http://localhost:3000")).replace(/\/$/, ""),
   /** Emails that become ADMIN on first Google sign-in (bootstrap). */
   adminEmails: list(process.env.ADMIN_EMAILS),
   /** Email domains allowed to self-provision as EMPLOYEE on first sign-in. Empty = invite-only. */
