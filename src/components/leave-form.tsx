@@ -1,9 +1,21 @@
 "use client";
 import { useState } from "react";
 
-type T = { id: string; name: string; available: number | null; requiresReason: boolean };
+type T = { id: string; name: string; available: number | null; requiresReason: boolean; medical: boolean };
 
-export function LeaveForm({ types, action }: { types: T[]; action: (fd: FormData) => Promise<void> }) {
+const FILE_ACCEPT = "image/jpeg,image/png,image/webp,image/heic,application/pdf";
+const FILE_CLASS =
+  "block w-full text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-brand-50 file:px-3 file:py-2 file:text-sm file:font-medium file:text-brand-700";
+
+export function LeaveForm({
+  types, action, currency, claimLimit,
+}: {
+  types: T[];
+  action: (fd: FormData) => Promise<void>;
+  currency: string;
+  /** Per-claim cap for medical claims; undefined = no medical claim category, null = no cap. */
+  claimLimit?: number | null;
+}) {
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [half, setHalf] = useState("NONE");
@@ -48,6 +60,31 @@ export function LeaveForm({ types, action }: { types: T[]; action: (fd: FormData
         <label className="label" htmlFor="reason">Reason {t?.requiresReason ? "(required)" : "(optional)"}</label>
         <textarea id="reason" name="reason" rows={2} className="input" required={t?.requiresReason} maxLength={1000} />
       </div>
+      {t?.medical && (
+        <fieldset key={t.id} className="grid gap-4 rounded-lg border border-slate-200 p-4 sm:col-span-2 sm:grid-cols-2">
+          <legend className="px-1 text-sm font-medium text-slate-700">Medical documents</legend>
+          <div className="sm:col-span-2">
+            <label className="label" htmlFor="medicalCert">Medical certificate (MC) · JPG, PNG, PDF · max 8 MB</label>
+            <input id="medicalCert" name="medicalCert" type="file" accept={FILE_ACCEPT} capture="environment" className={FILE_CLASS} />
+          </div>
+          {claimLimit !== undefined && (
+            <>
+              <p className="text-xs text-slate-500 sm:col-span-2">
+                Paid for the clinic visit? Claim it here and it&apos;s approved together with this leave.
+                {claimLimit !== null && ` Max ${currency} ${claimLimit.toFixed(2)}.`}
+              </p>
+              <div>
+                <label className="label" htmlFor="claimAmount">Medical claim ({currency}, optional)</label>
+                <input id="claimAmount" name="claimAmount" type="number" step="0.01" min="0.01" max={claimLimit ?? undefined} inputMode="decimal" className="input" />
+              </div>
+              <div>
+                <label className="label" htmlFor="claimReceipt">Clinic receipt</label>
+                <input id="claimReceipt" name="claimReceipt" type="file" accept={FILE_ACCEPT} capture="environment" className={FILE_CLASS} />
+              </div>
+            </>
+          )}
+        </fieldset>
+      )}
       <div className="sm:col-span-2">
         <button className="btn-primary">Submit request</button>
         <span className="ml-3 text-xs text-slate-500">Weekends and public holidays aren&apos;t counted.</span>

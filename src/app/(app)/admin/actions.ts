@@ -53,8 +53,17 @@ function employeeFields(fd: FormData) {
     employeeNo: opt(fd.get("employeeNo")),
     departmentId: opt(fd.get("departmentId")),
     managerId: opt(fd.get("managerId")),
+    backupManagerId: opt(fd.get("backupManagerId")),
     joinDate: joinRaw ? parseDay(joinRaw) : null,
   };
+}
+
+/** Backup approver must be someone other than the person and their main manager. */
+function backupError(userId: string | null, extra: { managerId: string | null; backupManagerId: string | null }) {
+  if (!extra.backupManagerId) return null;
+  if (extra.backupManagerId === userId) return "Someone can't be their own backup approver.";
+  if (extra.backupManagerId === extra.managerId) return "Pick a different person from the manager as backup approver.";
+  return null;
 }
 
 export async function createEmployee(fd: FormData) {
@@ -65,8 +74,11 @@ export async function createEmployee(fd: FormData) {
   const extra = employeeFields(fd);
   if (extra.employeeNo && (await db.user.findUnique({ where: { employeeNo: extra.employeeNo } })))
     back("/admin/employees", { error: "That employee number is already used." });
+  const bErr = backupError(null, extra);
+  if (bErr) back("/admin/employees", { error: bErr });
   const u = await db.user.create({ data: { ...p.data, ...extra } });
   await ensureManagerRole(extra.managerId);
+  await ensureManagerRole(extra.backupManagerId);
   await audit(me.id, "user.created", "User", u.id, { email: u.email, role: u.role });
   if (fd.get("sendInvite") === "on") {
     await notify(u.email, "You've been invited", [
@@ -88,6 +100,8 @@ export async function updateEmployee(fd: FormData) {
   const extra = employeeFields(fd);
 
   if (extra.managerId === id) back(path, { error: "Someone can't be their own manager." });
+  const bErr = backupError(id, extra);
+  if (bErr) back(path, { error: bErr });
   if (extra.managerId && (await createsCycle(id, extra.managerId))) back(path, { error: "That manager reports (directly or indirectly) to this person." });
   const clash = await db.user.findFirst({ where: { id: { not: id }, OR: [{ email: p.data.email }, ...(extra.employeeNo ? [{ employeeNo: extra.employeeNo }] : [])] } });
   if (clash) back(path, { error: "Email or employee number already used by someone else." });
@@ -97,11 +111,12 @@ export async function updateEmployee(fd: FormData) {
   if (losingAdmin && (await db.user.count({ where: { role: "ADMIN", status: "ACTIVE" } })) <= 1)
     back(path, { error: "You can't remove the last active admin." });
   // Demoting a manager who still has reports would orphan their approvals.
-  if (existing.role !== "EMPLOYEE" && p.data.role === "EMPLOYEE" && (await db.user.count({ where: { managerId: id } })) > 0)
-    back(path, { error: "Reassign this person's direct reports before making them an Employee." });
+  if (existing.role !== "EMPLOYEE" && p.data.role === "EMPLOYEE" && (await db.user.count({ where: { OR: [{ managerId: id }, { backupManagerId: id }] } })) > 0)
+    back(path, { error: "Reassign the people this person manages or backs up before making them an Employee." });
 
   await db.user.update({ where: { id }, data: { ...p.data, ...extra } });
   await ensureManagerRole(extra.managerId);
+  await ensureManagerRole(extra.backupManagerId);
   await audit(me.id, "user.updated", "User", id, { email: p.data.email, role: p.data.role, status: p.data.status });
   done(path, "Saved.");
 }

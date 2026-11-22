@@ -5,6 +5,7 @@ import { getBalances } from "@/lib/leave";
 import { fmtDay, fmtDateTime } from "@/lib/dates";
 import { Avatar, Empty, Flash, PageHeader, StatusBadge, type SP } from "@/components/ui";
 import { DecisionForm } from "@/components/decision-form";
+import { MedicalDocs } from "@/components/medical-docs";
 import { approveLeave, rejectLeave, revokeLeave } from "../../leave/actions";
 
 export const metadata = { title: "Leave approvals" };
@@ -13,11 +14,11 @@ export default async function LeaveApprovals({ searchParams }: { searchParams: S
   const me = await requireApprover();
   const sp = await searchParams;
   const tab = sp.tab === "history" ? "history" : "pending";
-  const owner = await approvableOwnersWhere(me);
+  const owner = await approvableOwnersWhere(me, "leave");
 
   const requests = await db.leaveRequest.findMany({
     where: { user: owner, status: tab === "pending" ? "PENDING" : { not: "PENDING" } },
-    include: { user: { include: { department: true } }, leaveType: true, approver: true },
+    include: { user: { include: { department: true, manager: true } }, leaveType: true, approver: true, claim: true },
     orderBy: tab === "pending" ? { startDate: "asc" } : { decidedAt: "desc" },
     take: tab === "pending" ? undefined : 100,
   });
@@ -38,7 +39,7 @@ export default async function LeaveApprovals({ searchParams }: { searchParams: S
     <>
       <PageHeader
         title="Leave approvals"
-        subtitle={me.role === "ADMIN" ? "All employees" : "Your direct reports"}
+        subtitle={me.role === "ADMIN" ? "All employees" : "Your direct reports, and people you're the backup approver for"}
       >
         <Link href="/approvals/leave" className={tab === "pending" ? "btn-primary" : "btn-secondary"}>Pending</Link>
         <Link href="/approvals/leave?tab=history" className={tab === "history" ? "btn-primary" : "btn-secondary"}>History</Link>
@@ -65,12 +66,16 @@ export default async function LeaveApprovals({ searchParams }: { searchParams: S
                           <div>
                             <p className="font-medium">{r.user.name}</p>
                             <p className="text-xs text-slate-500">{r.user.department?.name ?? r.user.email}</p>
+                            {me.role !== "ADMIN" && r.user.managerId !== me.id && r.user.backupManagerId === me.id && (
+                              <p className="text-xs font-medium text-amber-700">As backup{r.user.manager ? ` for ${r.user.manager.name}` : ""}</p>
+                            )}
                           </div>
                         </div>
                       </td>
                       <td>
                         <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full" style={{ background: r.leaveType.color }} />{r.leaveType.name}</span>
                         {r.reason && <p className="text-xs text-slate-500">{r.reason}</p>}
+                        <MedicalDocs leave={r} />
                         <p className="text-xs text-slate-400">Applied {fmtDateTime(r.createdAt)}</p>
                       </td>
                       <td className="whitespace-nowrap">

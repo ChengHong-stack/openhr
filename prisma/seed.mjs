@@ -18,7 +18,7 @@ const LEAVE_TYPES = [
 const CLAIM_CATS = [
   { name: "Mileage & Transport", limitPerClaim: 500 },
   { name: "Meals & Entertainment", limitPerClaim: 300 },
-  { name: "Medical / Clinic", limitPerClaim: 200 },
+  { name: "Medical / Clinic", limitPerClaim: 200, medical: true },
   { name: "Parking & Toll", limitPerClaim: null },
   { name: "Office Supplies", limitPerClaim: 500 },
   { name: "Travel & Accommodation", limitPerClaim: null },

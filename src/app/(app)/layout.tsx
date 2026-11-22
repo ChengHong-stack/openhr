@@ -11,10 +11,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   let pendingLeave = 0, pendingClaims = 0;
   if (isApprover) {
-    const owner = await approvableOwnersWhere(me);
+    const [leaveOwner, claimOwner] = await Promise.all([approvableOwnersWhere(me, "leave"), approvableOwnersWhere(me, "claim")]);
     [pendingLeave, pendingClaims] = await Promise.all([
-      db.leaveRequest.count({ where: { status: "PENDING", user: owner } }),
-      db.claim.count({ where: { status: "PENDING", user: owner } }),
+      db.leaveRequest.count({ where: { status: "PENDING", user: leaveOwner } }),
+      // Medical claims filed with leave are decided on the leave approvals page.
+      db.claim.count({ where: { status: "PENDING", leaveRequestId: null, user: claimOwner } }),
     ]);
   }
 

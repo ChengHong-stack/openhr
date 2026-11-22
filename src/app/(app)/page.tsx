@@ -12,13 +12,15 @@ export default async function Dashboard({ searchParams }: { searchParams: SP }) 
   const today = todayUTC();
   const in14 = new Date(today.getTime() + 14 * 86400000);
   const isApprover = me.role !== "EMPLOYEE";
-  const owner = isApprover ? await approvableOwnersWhere(me) : null;
+  const [leaveOwner, claimOwner] = isApprover
+    ? await Promise.all([approvableOwnersWhere(me, "leave"), approvableOwnersWhere(me, "claim")])
+    : [null, null];
 
   const [balances, myPending, myUpcoming, outToday, holidays, pendingLeave, pendingClaims] = await Promise.all([
     getBalances(me.id, today.getUTCFullYear()),
     Promise.all([
       db.leaveRequest.count({ where: { userId: me.id, status: "PENDING" } }),
-      db.claim.aggregate({ where: { userId: me.id, status: "PENDING" }, _count: true, _sum: { amount: true } }),
+      db.claim.aggregate({ where: { userId: me.id, status: "PENDING", leaveRequestId: null }, _count: true, _sum: { amount: true } }),
     ]),
     db.leaveRequest.findMany({
       where: { userId: me.id, status: { in: ["APPROVED", "PENDING"] }, endDate: { gte: today } },
@@ -29,8 +31,8 @@ export default async function Dashboard({ searchParams }: { searchParams: SP }) 
       include: { user: { include: { department: true } } }, orderBy: { user: { name: "asc" } },
     }),
     db.holiday.findMany({ where: { date: { gte: today, lte: new Date(today.getTime() + 60 * 86400000) } }, orderBy: { date: "asc" }, take: 4 }),
-    owner ? db.leaveRequest.count({ where: { status: "PENDING", user: owner } }) : 0,
-    owner ? db.claim.count({ where: { status: "PENDING", user: owner } }) : 0,
+    leaveOwner ? db.leaveRequest.count({ where: { status: "PENDING", user: leaveOwner } }) : 0,
+    claimOwner ? db.claim.count({ where: { status: "PENDING", leaveRequestId: null, user: claimOwner } }) : 0,
   ]);
   const comingUp = await db.leaveRequest.findMany({
     where: { status: "APPROVED", startDate: { gt: today, lte: in14 }, user: { status: "ACTIVE" } },

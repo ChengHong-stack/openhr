@@ -3,6 +3,10 @@ import { config } from "./config";
 import { eachDay, isoDow, ymd } from "./dates";
 import type { HalfDay } from "@prisma/client";
 
+/** Leave types (by code) that accept a medical certificate and a medical claim. */
+export const MEDICAL_LEAVE_CODES = ["MC", "HL"];
+export const isMedicalLeave = (code: string) => MEDICAL_LEAVE_CODES.includes(code.toUpperCase());
+
 /** Working days between two dates (inclusive), skipping non-working weekdays and public holidays. */
 export async function countLeaveDays(start: Date, end: Date, halfDay: HalfDay) {
   if (end < start) return 0;

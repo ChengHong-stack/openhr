@@ -49,6 +49,10 @@ model User {
   managerId    String?
   manager      User?       @relation("Reports", fields: [managerId], references: [id])
   reports      User[]      @relation("Reports")
+  /// Second person who can approve this user's leave (e.g. when the manager is away).
+  backupManagerId String?
+  backupManager   User?    @relation("BackupReports", fields: [backupManagerId], references: [id])
+  backupReports   User[]   @relation("BackupReports")
   lastLoginAt  DateTime?
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
@@ -116,6 +120,12 @@ model LeaveRequest {
   decisionNote String?
   decidedAt    DateTime?
   createdAt    DateTime      @default(now())
+  /// Medical certificate (medical leave types only).
+  certPath     String?
+  certName     String?
+  certMime     String?
+  /// Medical claim submitted together with this leave; decided with it.
+  claim        Claim?
 
   @@index([userId, status])
   @@index([startDate, endDate])
@@ -132,6 +142,8 @@ model ClaimCategory {
   name          String   @unique
   limitPerClaim Decimal? @db.Decimal(10, 2)
   active        Boolean  @default(true)
+  /// Medical claims are filed with medical leave, not from "My claims".
+  medical       Boolean  @default(false)
   claims        Claim[]
 }
 
@@ -154,6 +166,8 @@ model Claim {
   decisionNote String?
   decidedAt    DateTime?
   createdAt    DateTime      @default(now())
+  leaveRequestId String?       @unique
+  leaveRequest   LeaveRequest? @relation(fields: [leaveRequestId], references: [id], onDelete: Cascade)
 
   @@index([userId, status])
 }

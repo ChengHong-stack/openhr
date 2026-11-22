@@ -16,8 +16,8 @@ const root = () => path.resolve(config.uploadDir);
 
 export async function saveUpload(file: File, folder: string) {
   const ext = ALLOWED_MIME[file.type];
-  if (!ext) throw new Error("Receipt must be a JPG, PNG, WEBP, HEIC or PDF.");
-  if (file.size > MAX_UPLOAD) throw new Error("Receipt must be 8 MB or smaller.");
+  if (!ext) throw new Error("Files must be a JPG, PNG, WEBP, HEIC or PDF.");
+  if (file.size > MAX_UPLOAD) throw new Error("Files must be 8 MB or smaller.");
   const dir = path.join(root(), folder);
   await mkdir(dir, { recursive: true });
   const rel = path.join(folder, crypto.randomUUID() + ext);

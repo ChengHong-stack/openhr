@@ -12,14 +12,15 @@ export default async function ClaimsPage({ searchParams }: { searchParams: SP })
   const me = await requireUser();
   const sp = await searchParams;
   const [cats, claims] = await Promise.all([
-    db.claimCategory.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
-    db.claim.findMany({ where: { userId: me.id }, include: { category: true, approver: true }, orderBy: { createdAt: "desc" }, take: 200 }),
+    // Medical claims are filed with medical leave, so they're not offered or listed here.
+    db.claimCategory.findMany({ where: { active: true, medical: false }, orderBy: { name: "asc" } }),
+    db.claim.findMany({ where: { userId: me.id, leaveRequestId: null }, include: { category: true, approver: true }, orderBy: { createdAt: "desc" }, take: 200 }),
   ]);
   const sum = (s: string) => claims.filter((c) => c.status === s).reduce((a, c) => a + Number(c.amount), 0);
 
   return (
     <>
-      <PageHeader title="My claims" subtitle="Submit expenses with a receipt for approval" />
+      <PageHeader title="My claims" subtitle="Submit expenses with a receipt for approval. Medical claims go with your medical leave." />
       <Flash ok={sp.ok} error={sp.error} />
 
       <div className="mb-6 grid gap-3 sm:grid-cols-3">

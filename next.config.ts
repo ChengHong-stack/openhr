@@ -6,7 +6,7 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ["@prisma/client", "@prisma/adapter-pg", "pg"],
   // The WASM query compiler is loaded at runtime via fs, so tracing misses it.
   outputFileTracingIncludes: { "/**": ["./node_modules/.prisma/client/**/*"] },
-  experimental: { serverActions: { bodySizeLimit: "10mb" } },
+  experimental: { serverActions: { bodySizeLimit: "20mb" /* medical leave can carry an MC and a receipt */ } },
 };
 
 export default nextConfig;

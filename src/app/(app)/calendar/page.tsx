@@ -36,7 +36,7 @@ export default async function CalendarPage({ searchParams }: { searchParams: SP 
   ]);
   const hol = new Map(holidays.map((h) => [ymd(h.date), h.name]));
   // Leave type is only shown to the owner and their approvers (medical leave etc. is private).
-  const visibleType = (r: (typeof requests)[number]) => r.userId === me.id || canApprove(me, r.user);
+  const visibleType = (r: (typeof requests)[number]) => r.userId === me.id || canApprove(me, r.user, "leave");
 
   const days = eachDay(gridStart, gridEnd);
   const monthLabel = first.toLocaleDateString("en-MY", { month: "long", year: "numeric", timeZone: "UTC" });

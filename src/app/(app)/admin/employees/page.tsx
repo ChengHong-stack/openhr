@@ -15,7 +15,7 @@ export default async function Employees({ searchParams }: { searchParams: SP }) 
   const [users, departments, managers] = await Promise.all([
     db.user.findMany({
       where: { status, ...(q ? { OR: [{ name: { contains: q, mode: "insensitive" } }, { email: { contains: q, mode: "insensitive" } }, { employeeNo: { contains: q, mode: "insensitive" } }] } : {}) },
-      include: { department: true, manager: true, _count: { select: { reports: true } } },
+      include: { department: true, manager: true, backupManager: true, _count: { select: { reports: true } } },
       orderBy: { name: "asc" },
     }),
     db.department.findMany({ orderBy: { name: "asc" }, include: { _count: { select: { users: true } } } }),
@@ -51,7 +51,7 @@ export default async function Employees({ searchParams }: { searchParams: SP }) 
                       </td>
                       <td><RoleBadge role={u.role} />{u._count.reports > 0 && <p className="mt-1 text-xs text-slate-500">{u._count.reports} report(s)</p>}</td>
                       <td>{u.department?.name ?? "—"}<p className="text-xs text-slate-500">{u.jobTitle}</p></td>
-                      <td>{u.manager?.name ?? "—"}</td>
+                      <td>{u.manager?.name ?? "—"}{u.backupManager && <p className="text-xs text-slate-500">Backup: {u.backupManager.name}</p>}</td>
                       <td className="text-xs text-slate-500">{u.lastLoginAt ? fmtDateTime(u.lastLoginAt) : "Never"}</td>
                     </tr>
                   ))}
@@ -77,6 +77,9 @@ export default async function Employees({ searchParams }: { searchParams: SP }) 
               </div>
               <div><label className="label">Manager (approves their leave & claims)</label>
                 <select name="managerId" className="input"><option value="">— None (admins approve) —</option>{managers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select>
+              </div>
+              <div><label className="label">Backup approver (optional, can also approve leave)</label>
+                <select name="backupManagerId" className="input"><option value="">— None —</option>{managers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div><label className="label">Job title</label><input name="jobTitle" className="input" /></div>

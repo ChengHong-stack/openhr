@@ -12,7 +12,10 @@ export default async function EmployeeDetail({ params, searchParams }: { params:
   const { id } = await params;
   const sp = await searchParams;
   const year = Number(sp.year) || todayUTC().getUTCFullYear();
-  const u = await db.user.findUnique({ where: { id }, include: { reports: { orderBy: { name: "asc" } } } });
+  const u = await db.user.findUnique({
+    where: { id },
+    include: { reports: { orderBy: { name: "asc" } }, backupReports: { orderBy: { name: "asc" } } },
+  });
   if (!u) notFound();
   const [departments, managers, balances, recent] = await Promise.all([
     db.department.findMany({ orderBy: { name: "asc" } }),
@@ -48,6 +51,9 @@ export default async function EmployeeDetail({ params, searchParams }: { params:
             <div><label className="label">Manager</label>
               <select name="managerId" defaultValue={u.managerId ?? ""} className="input"><option value="">— None (admins approve) —</option>{managers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select>
             </div>
+            <div className="sm:col-span-2"><label className="label">Backup approver (can also approve leave, e.g. when the manager is away)</label>
+              <select name="backupManagerId" defaultValue={u.backupManagerId ?? ""} className="input"><option value="">— None —</option>{managers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select>
+            </div>
             <div><label className="label">Job title</label><input name="jobTitle" defaultValue={u.jobTitle ?? ""} className="input" /></div>
             <div><label className="label">Employee no.</label><input name="employeeNo" defaultValue={u.employeeNo ?? ""} className="input" /></div>
             <div><label className="label">Join date</label><input name="joinDate" type="date" defaultValue={u.joinDate ? ymd(u.joinDate) : ""} className="input" /></div>
@@ -58,6 +64,12 @@ export default async function EmployeeDetail({ params, searchParams }: { params:
             <div className="mt-5 border-t border-slate-100 pt-4 text-sm">
               <p className="label">Direct reports</p>
               <p>{u.reports.map((r) => r.name).join(", ")}</p>
+            </div>
+          )}
+          {u.backupReports.length > 0 && (
+            <div className="mt-4 border-t border-slate-100 pt-4 text-sm">
+              <p className="label">Backup approver for</p>
+              <p>{u.backupReports.map((r) => r.name).join(", ")}</p>
             </div>
           )}
         </section>

@@ -1,10 +1,12 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/session";
-import { getBalances } from "@/lib/leave";
+import { getBalances, isMedicalLeave } from "@/lib/leave";
 import { fmtDay, todayUTC } from "@/lib/dates";
+import { config } from "@/lib/config";
 import { Flash, PageHeader, StatusBadge, Empty, type SP } from "@/components/ui";
 import { LeaveForm } from "@/components/leave-form";
+import { MedicalDocs } from "@/components/medical-docs";
 import { applyLeave, cancelLeave } from "./actions";
 
 export const metadata = { title: "My leave" };
@@ -14,20 +16,22 @@ export default async function LeavePage({ searchParams }: { searchParams: SP }) 
   const sp = await searchParams;
   const thisYear = todayUTC().getUTCFullYear();
   const year = Number(sp.year) || thisYear;
-  const [balances, types, requests] = await Promise.all([
+  const [balances, types, requests, medicalCat] = await Promise.all([
     getBalances(me.id, year),
     db.leaveType.findMany({ where: { active: true }, orderBy: [{ sortOrder: "asc" }, { name: "asc" }] }),
     db.leaveRequest.findMany({
       where: { userId: me.id, startDate: { gte: new Date(Date.UTC(year, 0, 1)), lte: new Date(Date.UTC(year, 11, 31)) } },
-      include: { leaveType: true, approver: true },
+      include: { leaveType: true, approver: true, claim: true },
       orderBy: { startDate: "desc" },
     }),
+    db.claimCategory.findFirst({ where: { medical: true, active: true }, orderBy: { name: "asc" } }),
   ]);
   const today = todayUTC();
   const formTypes = types.map((t) => ({
     id: t.id,
     name: t.name,
     requiresReason: t.requiresReason,
+    medical: isMedicalLeave(t.code),
     available: t.paid ? (balances.find((b) => b.leaveTypeId === t.id)?.available ?? 0) : null,
   }));
 
@@ -58,7 +62,12 @@ export default async function LeavePage({ searchParams }: { searchParams: SP }) 
       <div className="grid gap-6 lg:grid-cols-5">
         <section className="card lg:col-span-2">
           <h2 className="h2 mb-4">Apply for leave</h2>
-          {formTypes.length ? <LeaveForm types={formTypes} action={applyLeave} /> : <Empty>No leave types set up yet.</Empty>}
+          {formTypes.length ? <LeaveForm
+            types={formTypes}
+            action={applyLeave}
+            currency={config.currency}
+            claimLimit={medicalCat ? (medicalCat.limitPerClaim === null ? null : Number(medicalCat.limitPerClaim)) : undefined}
+          /> : <Empty>No leave types set up yet.</Empty>}
         </section>
 
         <section className="card lg:col-span-3">
@@ -74,7 +83,11 @@ export default async function LeavePage({ searchParams }: { searchParams: SP }) 
                     const cancellable = r.status === "PENDING" || (r.status === "APPROVED" && r.startDate > today);
                     return (
                       <tr key={r.id}>
-                        <td className="font-medium">{r.leaveType.name}{r.reason && <p className="text-xs font-normal text-slate-500">{r.reason}</p>}</td>
+                        <td className="font-medium">
+                          {r.leaveType.name}
+                          {r.reason && <p className="text-xs font-normal text-slate-500">{r.reason}</p>}
+                          <MedicalDocs leave={r} />
+                        </td>
                         <td className="whitespace-nowrap">
                           {fmtDay(r.startDate)}{r.endDate.getTime() !== r.startDate.getTime() && <> – {fmtDay(r.endDate)}</>}
                           {r.halfDay !== "NONE" && <span className="ml-1 text-xs text-slate-500">({r.halfDay})</span>}

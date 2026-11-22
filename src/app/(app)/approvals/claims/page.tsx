@@ -14,7 +14,7 @@ export default async function ClaimApprovals({ searchParams }: { searchParams: S
   const sp = await searchParams;
   const tab = sp.tab === "history" ? "history" : "pending";
   const claims = await db.claim.findMany({
-    where: { user: await approvableOwnersWhere(me), status: tab === "pending" ? "PENDING" : { not: "PENDING" } },
+    where: { user: await approvableOwnersWhere(me, "claim"), leaveRequestId: null, status: tab === "pending" ? "PENDING" : { not: "PENDING" } },
     include: { user: { include: { department: true } }, category: true, approver: true },
     orderBy: tab === "pending" ? { createdAt: "asc" } : { decidedAt: "desc" },
     take: tab === "pending" ? undefined : 100,

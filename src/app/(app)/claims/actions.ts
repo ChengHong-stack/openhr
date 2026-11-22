@@ -2,7 +2,7 @@
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { requireUser, canApprove, canSelfApprove } from "@/lib/session";
+import { requireUser, canApprove, canSelfApprove, approversFor } from "@/lib/session";
 import { parseDay, fmtDay, todayUTC } from "@/lib/dates";
 import { fmtMoney } from "@/lib/money";
 import { saveUpload } from "@/lib/storage";
@@ -33,6 +33,7 @@ export async function submitClaim(fd: FormData) {
 
   const cat = await db.claimCategory.findFirst({ where: { id: v.categoryId, active: true } });
   if (!cat) back("/claims", { error: "That category isn't available." });
+  if (cat.medical) back("/claims", { error: "Medical claims are submitted with your medical leave (My leave)." });
   if (cat.limitPerClaim && v.amount > Number(cat.limitPerClaim))
     back("/claims", { error: `${cat.name} is capped at ${fmtMoney(cat.limitPerClaim)} per claim.` });
 
@@ -60,9 +61,7 @@ export async function submitClaim(fd: FormData) {
   });
   await audit(me.id, "claim.submitted", "Claim", claim.id, { amount: v.amount, category: cat.name });
 
-  const approvers = me.managerId
-    ? await db.user.findMany({ where: { id: me.managerId, status: "ACTIVE" } })
-    : await db.user.findMany({ where: { role: "ADMIN", status: "ACTIVE", id: { not: me.id } } });
+  const approvers = await approversFor(me, "claim");
   await notify(approvers.map((a) => a.email), `Claim from ${me.name}`,
     [`${me.name} submitted a ${cat.name} claim of ${fmtMoney(v.amount)} (${fmtDay(date)}).`, v.description], "/approvals/claims");
 
@@ -75,6 +74,7 @@ export async function cancelClaim(fd: FormData) {
   const id = String(fd.get("id"));
   const c = await db.claim.findUnique({ where: { id } });
   if (!c || c.userId !== me.id) back("/claims", { error: "Claim not found." });
+  if (c.leaveRequestId) back("/claims", { error: "This claim belongs to a leave request. Cancel it from My leave." });
   if (c.status !== "PENDING") back("/claims", { error: "Only pending claims can be withdrawn." });
   await db.claim.update({ where: { id }, data: { status: "CANCELLED" } });
   await audit(me.id, "claim.cancelled", "Claim", id);
@@ -92,6 +92,7 @@ export async function decideClaim(fd: FormData) {
 
   const c = await db.claim.findUnique({ where: { id }, include: { user: true, category: true } });
   if (!c) back(returnTo, { error: "Claim not found." });
+  if (c.leaveRequestId) back(returnTo, { error: "This medical claim is decided together with its leave request." });
   if (!canApprove(me, c.user) && !(c.userId === me.id && (await canSelfApprove(me)))) back(returnTo, { error: "You can't approve this claim." });
   if (c.status !== "PENDING") back(returnTo, { error: `Already ${c.status.toLowerCase()}.` });
   if (decision === "REJECTED" && !note) back(returnTo, { error: "Add a note explaining the rejection." });

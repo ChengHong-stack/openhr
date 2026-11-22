@@ -2,9 +2,11 @@
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { requireUser, canApprove, canSelfApprove } from "@/lib/session";
+import { requireUser, canApprove, canSelfApprove, approversFor } from "@/lib/session";
 import { parseDay, fmtDay, todayUTC } from "@/lib/dates";
-import { countLeaveDays, getBalances } from "@/lib/leave";
+import { countLeaveDays, getBalances, isMedicalLeave } from "@/lib/leave";
+import { fmtMoney } from "@/lib/money";
+import { saveUpload } from "@/lib/storage";
 import { audit } from "@/lib/audit";
 import { notify } from "@/lib/mail";
 import { back } from "@/lib/flash";
@@ -16,6 +18,11 @@ const ApplySchema = z.object({
   halfDay: z.enum(["NONE", "AM", "PM"]).default("NONE"),
   reason: z.string().max(1000).optional(),
 });
+
+const fileFrom = (fd: FormData, key: string) => {
+  const f = fd.get(key);
+  return f instanceof File && f.size > 0 ? f : null;
+};
 
 export async function applyLeave(fd: FormData) {
   const me = await requireUser();
@@ -52,38 +59,89 @@ export async function applyLeave(fd: FormData) {
       back("/leave", { error: `Not enough ${type.name} balance: ${bal?.available ?? 0} day(s) available, ${days} requested.` });
   }
 
-  const req = await db.leaveRequest.create({
-    data: { userId: me.id, leaveTypeId: type.id, startDate: start, endDate: end, halfDay: v.halfDay, days, reason },
-  });
-  await audit(me.id, "leave.applied", "LeaveRequest", req.id, { days, type: type.code });
+  // Medical leave: optional medical certificate and optional medical claim, filed together.
+  const medical = isMedicalLeave(type.code);
+  const certFile = medical ? fileFrom(fd, "medicalCert") : null;
+  const receiptFile = medical ? fileFrom(fd, "claimReceipt") : null;
+  const amountRaw = medical ? String(fd.get("claimAmount") ?? "").trim() : "";
+  let claim: { categoryId: string; amount: number } | null = null;
+  if (amountRaw) {
+    const amount = Math.round(Number(amountRaw) * 100) / 100;
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000) back("/leave", { error: "Enter a valid medical claim amount." });
+    if (!receiptFile) back("/leave", { error: "Attach the clinic receipt for your medical claim." });
+    const cat = await db.claimCategory.findFirst({ where: { medical: true, active: true }, orderBy: { name: "asc" } });
+    if (!cat) back("/leave", { error: "Medical claims aren't set up yet. Ask HR." });
+    if (cat.limitPerClaim && amount > Number(cat.limitPerClaim))
+      back("/leave", { error: `Medical claims are capped at ${fmtMoney(cat.limitPerClaim)}.` });
+    claim = { categoryId: cat.id, amount };
+  } else if (receiptFile) {
+    back("/leave", { error: "Enter the amount for your medical claim, or remove the receipt." });
+  }
 
-  // Notify the manager, or all admins if there is no manager.
-  const approvers = me.managerId
-    ? await db.user.findMany({ where: { id: me.managerId, status: "ACTIVE" } })
-    : await db.user.findMany({ where: { role: "ADMIN", status: "ACTIVE", id: { not: me.id } } });
+  let cert: { certPath: string; certName: string; certMime: string } | undefined;
+  let receipt: { receiptPath: string; receiptName: string; receiptMime: string } | undefined;
+  try {
+    if (certFile) cert = { certPath: await saveUpload(certFile, "medical-certs"), certName: certFile.name.slice(0, 200), certMime: certFile.type };
+    if (claim && receiptFile) receipt = { receiptPath: await saveUpload(receiptFile, "receipts"), receiptName: receiptFile.name.slice(0, 200), receiptMime: receiptFile.type };
+  } catch (e) {
+    back("/leave", { error: (e as Error).message });
+  }
+
+  const today = todayUTC();
+  const req = await db.leaveRequest.create({
+    data: {
+      userId: me.id, leaveTypeId: type.id, startDate: start, endDate: end, halfDay: v.halfDay, days, reason,
+      ...cert,
+      ...(claim && {
+        claim: {
+          create: {
+            userId: me.id,
+            categoryId: claim.categoryId,
+            amount: claim.amount,
+            expenseDate: start > today ? today : start,
+            description: `${type.name}, ${fmtDay(start)}${end > start ? ` – ${fmtDay(end)}` : ""}`,
+            ...receipt,
+          },
+        },
+      }),
+    },
+  });
+  await audit(me.id, "leave.applied", "LeaveRequest", req.id, { days, type: type.code, cert: !!cert, claim: claim?.amount ?? null });
+
+  const approvers = await approversFor(me, "leave");
   await notify(
     approvers.map((a) => a.email),
     `Leave request from ${me.name}`,
-    [`${me.name} applied for ${days} day(s) of ${type.name}.`, `${fmtDay(start)} – ${fmtDay(end)}`, reason ? `Reason: ${reason}` : ""],
+    [
+      `${me.name} applied for ${days} day(s) of ${type.name}.`,
+      `${fmtDay(start)} – ${fmtDay(end)}`,
+      reason ? `Reason: ${reason}` : "",
+      cert ? "Medical certificate attached." : "",
+      claim ? `Includes a medical claim of ${fmtMoney(claim.amount)}.` : "",
+    ],
     "/approvals/leave",
   );
 
   revalidatePath("/", "layout");
-  back("/leave", { ok: `Applied for ${days} day(s) of ${type.name}. Waiting for approval.` });
+  back("/leave", { ok: `Applied for ${days} day(s) of ${type.name}${claim ? ` with a ${fmtMoney(claim.amount)} medical claim` : ""}. Waiting for approval.` });
 }
 
 export async function cancelLeave(fd: FormData) {
   const me = await requireUser();
   const id = String(fd.get("id"));
-  const req = await db.leaveRequest.findUnique({ where: { id } });
+  const req = await db.leaveRequest.findUnique({ where: { id }, include: { claim: true } });
   if (!req || req.userId !== me.id) back("/leave", { error: "Request not found." });
   // Employees may withdraw pending requests, or approved ones that haven't started yet.
   const ok = req.status === "PENDING" || (req.status === "APPROVED" && req.startDate > todayUTC());
   if (!ok) back("/leave", { error: "This request can no longer be cancelled. Ask HR." });
-  await db.leaveRequest.update({ where: { id }, data: { status: "CANCELLED" } });
-  await audit(me.id, "leave.cancelled", "LeaveRequest", id, { previous: req.status });
+  await db.$transaction([
+    db.leaveRequest.update({ where: { id }, data: { status: "CANCELLED" } }),
+    // The attached medical claim goes with it.
+    db.claim.updateMany({ where: { leaveRequestId: id, status: { in: ["PENDING", "APPROVED"] } }, data: { status: "CANCELLED" } }),
+  ]);
+  await audit(me.id, "leave.cancelled", "LeaveRequest", id, { previous: req.status, claimCancelled: !!req.claim });
   revalidatePath("/", "layout");
-  back("/leave", { ok: "Leave request cancelled." });
+  back("/leave", { ok: req.claim ? "Leave request and its medical claim cancelled." : "Leave request cancelled." });
 }
 
 export async function decideLeave(fd: FormData) {
@@ -94,9 +152,10 @@ export async function decideLeave(fd: FormData) {
   const returnTo = String(fd.get("returnTo") || "/approvals/leave");
   if (!["APPROVED", "REJECTED", "CANCELLED"].includes(decision)) back(returnTo, { error: "Invalid action." });
 
-  const req = await db.leaveRequest.findUnique({ where: { id }, include: { user: true, leaveType: true } });
+  const req = await db.leaveRequest.findUnique({ where: { id }, include: { user: true, leaveType: true, claim: true } });
   if (!req) back(returnTo, { error: "Request not found." });
-  if (!canApprove(me, req.user) && !(req.userId === me.id && (await canSelfApprove(me)))) back(returnTo, { error: "You can't approve this request." });
+  if (!canApprove(me, req.user, "leave") && !(req.userId === me.id && (await canSelfApprove(me))))
+    back(returnTo, { error: "You can't approve this request." });
 
   if (decision === "CANCELLED") {
     // Revoke previously-approved leave (admin only).
@@ -112,20 +171,30 @@ export async function decideLeave(fd: FormData) {
     if (!bal || bal.available < 0) back(returnTo, { error: `${req.user.name} doesn't have enough ${req.leaveType.name} balance.` });
   }
 
-  await db.leaveRequest.update({
-    where: { id },
-    data: { status: decision as "APPROVED" | "REJECTED" | "CANCELLED", approverId: me.id, decisionNote: note, decidedAt: new Date() },
+  const status = decision as "APPROVED" | "REJECTED" | "CANCELLED";
+  const decided = { status, approverId: me.id, decisionNote: note, decidedAt: new Date() };
+  // The medical claim filed with this leave follows the leave decision.
+  const claimFollows = !!req.claim && (req.claim.status === "PENDING" || (status === "CANCELLED" && req.claim.status === "APPROVED"));
+  await db.$transaction([
+    db.leaveRequest.update({ where: { id }, data: decided }),
+    ...(claimFollows && req.claim ? [db.claim.update({ where: { id: req.claim.id }, data: decided })] : []),
+  ]);
+  await audit(me.id, `leave.${decision.toLowerCase()}`, "LeaveRequest", id, {
+    owner: req.user.email, note, ...(claimFollows && req.claim ? { claimId: req.claim.id, claimAmount: Number(req.claim.amount) } : {}),
   });
-  await audit(me.id, `leave.${decision.toLowerCase()}`, "LeaveRequest", id, { owner: req.user.email, note });
   const verb = decision === "APPROVED" ? "approved" : decision === "REJECTED" ? "rejected" : "revoked";
   await notify(
     req.user.email,
     `Your leave was ${verb}`,
-    [`${me.name} ${verb} your ${req.leaveType.name} (${fmtDay(req.startDate)} – ${fmtDay(req.endDate)}).`, note ? `Note: ${note}` : ""],
+    [
+      `${me.name} ${verb} your ${req.leaveType.name} (${fmtDay(req.startDate)} – ${fmtDay(req.endDate)}).`,
+      claimFollows && req.claim ? `Your medical claim of ${fmtMoney(req.claim.amount)} was also ${verb}.` : "",
+      note ? `Note: ${note}` : "",
+    ],
     "/leave",
   );
   revalidatePath("/", "layout");
-  back(returnTo, { ok: `Leave ${verb} for ${req.user.name}.` });
+  back(returnTo, { ok: `Leave ${verb} for ${req.user.name}${claimFollows ? " (with medical claim)" : ""}.` });
 }
 
 // One action per button: a button's name/value isn't reliably sent with server-action form submits.

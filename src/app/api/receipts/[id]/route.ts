@@ -8,7 +8,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const { id } = await params;
   const c = await db.claim.findUnique({ where: { id }, include: { user: true } });
   if (!c?.receiptPath) return new Response("Not found", { status: 404 });
-  if (c.userId !== me.id && !canApprove(me, c.user)) return new Response("Forbidden", { status: 403 });
+  // Medical claims filed with leave are visible to whoever can approve that leave (incl. backup).
+  if (c.userId !== me.id && !canApprove(me, c.user, c.leaveRequestId ? "leave" : "claim")) return new Response("Forbidden", { status: 403 });
   try {
     const buf = await readUpload(c.receiptPath);
     const safeName = (c.receiptName ?? "receipt").replace(/[^\w.\- ]/g, "_");

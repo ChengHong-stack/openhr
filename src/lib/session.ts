@@ -31,24 +31,36 @@ export async function requireApprover() {
   return u;
 }
 
-/** Admins approve anyone; managers approve their direct reports. Nobody approves their own. */
-export function canApprove(actor: Pick<User, "id" | "role">, owner: Pick<User, "id" | "managerId">) {
+/** What is being approved. Backup approvers only cover leave. */
+export type ApprovalKind = "leave" | "claim";
+
+/**
+ * Admins approve anyone; managers approve their direct reports, and for leave also the people
+ * they are the backup approver for. Nobody approves their own.
+ */
+export function canApprove(
+  actor: Pick<User, "id" | "role">,
+  owner: Pick<User, "id" | "managerId" | "backupManagerId">,
+  kind: ApprovalKind = "claim",
+) {
   if (actor.id === owner.id) return false;
   if (actor.role === "ADMIN") return true;
-  return actor.role === "MANAGER" && owner.managerId === actor.id;
+  if (actor.role !== "MANAGER") return false;
+  return owner.managerId === actor.id || (kind === "leave" && owner.backupManagerId === actor.id);
 }
 
 /**
  * Fallback for admins nobody else can approve: no active manager and no other active admin.
  * Without this, a sole admin's own requests would be invisible to every approver.
  */
-export async function canSelfApprove(actor: Pick<User, "id" | "role" | "managerId">) {
+export async function canSelfApprove(actor: Pick<User, "id" | "role" | "managerId" | "backupManagerId">) {
   if (actor.role !== "ADMIN") return false;
+  const others = [actor.managerId, actor.backupManagerId].filter((x): x is string => !!x);
   const other = await db.user.findFirst({
     where: {
       status: "ACTIVE",
       id: { not: actor.id },
-      OR: [{ role: "ADMIN" }, ...(actor.managerId ? [{ id: actor.managerId }] : [])],
+      OR: [{ role: "ADMIN" }, ...(others.length ? [{ id: { in: others } }] : [])],
     },
     select: { id: true },
   });
@@ -56,7 +68,22 @@ export async function canSelfApprove(actor: Pick<User, "id" | "role" | "managerI
 }
 
 /** Prisma filter for users whose requests the actor may approve. */
-export async function approvableOwnersWhere(actor: Pick<User, "id" | "role" | "managerId">) {
-  if (actor.role !== "ADMIN") return { managerId: actor.id };
+export async function approvableOwnersWhere(
+  actor: Pick<User, "id" | "role" | "managerId" | "backupManagerId">,
+  kind: ApprovalKind = "claim",
+) {
+  if (actor.role !== "ADMIN") {
+    return kind === "leave" ? { OR: [{ managerId: actor.id }, { backupManagerId: actor.id }] } : { managerId: actor.id };
+  }
   return (await canSelfApprove(actor)) ? {} : { id: { not: actor.id } };
+}
+
+/** Active people to notify about a new request: manager (+ backup for leave), else all admins. */
+export async function approversFor(
+  owner: Pick<User, "id" | "managerId" | "backupManagerId">,
+  kind: ApprovalKind = "claim",
+) {
+  const ids = [owner.managerId, kind === "leave" ? owner.backupManagerId : null].filter((x): x is string => !!x);
+  const found = ids.length ? await db.user.findMany({ where: { id: { in: ids }, status: "ACTIVE" } }) : [];
+  return found.length ? found : db.user.findMany({ where: { role: "ADMIN", status: "ACTIVE", id: { not: owner.id } } });
 }
